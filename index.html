@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sitecopy — Mirror any website</title>
+<meta name="description" content="Paste a URL, get a local copy. Sitecopy fetches the page and its assets and packages them into a zip you can open offline.">
+
+<!-- Type: JetBrains Mono carries the tool's "console" personality for headlines/data; Inter handles body/UI copy so long text stays readable. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  /* ============================================
+     DESIGN TOKENS
+     Dark "engineering tool" palette — deliberately
+     not the cream/serif or generic dark+single-accent
+     defaults. Teal accent reads as terminal/data,
+     fitting a tool that copies sites byte by byte.
+     ============================================ */
+  :root{
+    --bg:        #0B0D10;
+    --panel:     #15181D;
+    --panel-2:   #1B1F26;
+    --border:    #262B33;
+    --text:      #E8EAED;
+    --text-dim:  #7C8591;
+    --accent:    #5EEAD4;
+    --accent-dim:#2D7A6E;
+    --error:     #F87171;
+    --error-bg:  #2A1414;
+    --success:   #5EEAD4;
+
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Inter', -apple-system, sans-serif;
+
+    --radius: 10px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  *{ box-sizing: border-box; }
+  html{ color-scheme: dark; }
+
+  body{
+    margin:0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(94,234,212,0.06), transparent 45%),
+      radial-gradient(circle at 85% 100%, rgba(94,234,212,0.04), transparent 40%);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Respect reduced-motion preference throughout */
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Visible keyboard focus everywhere — accessibility floor */
+  :focus-visible{
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .skip-link{
+    position:absolute; left:-9999px; top:0;
+    background:var(--accent); color:#0B0D10; padding:8px 14px;
+    font-family:var(--mono); font-size:13px; z-index:100;
+  }
+  .skip-link:focus{ left:12px; top:12px; }
+
+  /* ============================================
+     LAYOUT SHELL
+     ============================================ */
+  .wrap{
+    max-width: 760px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0 24px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header.top{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    padding: 28px 0 0;
+  }
+
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-family: var(--mono);
+    font-weight:600;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+  .brand .dot{
+    width:9px; height:9px; border-radius:50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(94,234,212,0.15);
+  }
+
+  .top-meta{
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ============================================
+     HERO — concise, tool-first. Not a marketing
+     hero with stats; the input *is* the hero.
+     ============================================ */
+  .hero{
+    padding: 56px 0 32px;
+  }
+  .hero h1{
+    font-family: var(--mono);
+    font-size: clamp(28px, 5vw, 40px);
+    font-weight: 700;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+  .hero h1 .accent{ color: var(--accent); }
+  .hero p{
+    font-size: 16px;
+    color: var(--text-dim);
+    max-width: 50ch;
+    margin: 0;
+  }
+
+  /* ============================================
+     CONSOLE CARD — the signature element.
+     Styled like a terminal window: title bar with
+     dots, a command-style URL input, and a log
+     panel that streams real status lines.
+     ============================================ */
+  .console{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 20px 60px -20px rgba(0,0,0,0.6);
+  }
+
+  .console-bar{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-2);
+  }
+  .console-bar .traffic{ display:flex; gap:6px; }
+  .console-bar .traffic span{
+    width:10px; height:10px; border-radius:50%;
+    background: var(--border);
+  }
+  .console-bar .label{
+    margin-left: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .console-body{ padding: 20px; }
+
+  /* Command-style URL form */
+  form.url-form{
+    display:flex;
+    gap:10px;
+    flex-wrap: wrap;
+  }
+
+  .input-row{
+    flex: 1 1 280px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 14px;
+    transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  }
+  .input-row:focus-within{
+    border-color: var(--accent-dim);
+    box-shadow: 0 0 0 3px rgba(94,234,212,0.1);
+  }
+  .input-row .prompt{
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 14px;
+    user-select: none;
+  }
+  .input-row input{
+    flex:1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 14px 0;
+    min-width: 0;
+  }
+  .input-row input::placeholder{ color: var(--text-dim); }
+
+  .btn{
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    padding: 14px 22px;
+    cursor: pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition: transform 0.15s var(--ease), background 0.2s var(--ease), box-shadow 0.2s var(--ease);
+    white-space: nowrap;
+  }
+  .btn-primary{
+    background: var(--accent);
+    color: #061310;
+  }
+  .btn-primary:hover:not(:disabled){
+    background: #79f0db;
+    box-shadow: 0 8px 24px -8px rgba(94,234,212,0.5);
+  }
+  .btn-primary:active:not(:disabled){ transform: scale(0.97); }
+  .btn-primary:disabled{
+    background: var(--border);
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+
+  /* Helper / hint line under input */
+  .hint{
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+
+  /* ============================================
+     ERROR ALERT
+     ============================================ */
+  .alert{
+    margin-top: 16px;
+    display:flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--error-bg);
+    border: 1px solid rgba(248,113,113,0.35);
+    color: #FCA5A5;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+    animation: slideIn 0.25s var(--ease);
+  }
+  .alert svg{ flex-shrink:0; margin-top:1px; }
+  .alert[hidden]{ display:none; }
+
+  @keyframes slideIn{
+    from{ opacity:0; transform: translateY(-6px); }
+    to{ opacity:1; transform: translateY(0); }
+  }
+
+  /* ============================================
+     LOG PANEL — the signature element.
+     A live stream of status lines, like watching
+     a CLI command execute. Replaces the generic
+     spinner with something true to the subject.
+     ============================================ */
+  .log-panel{
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #0A0C0F;
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.35s var(--ease);
+  }
+  .log-panel.open{ max-height: 280px; }
+
+  .log-scroll{
+    padding: 14px 16px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .log-line{
+    display:flex;
+    gap: 10px;
+    padding: 3px 0;
+    color: var(--text-dim);
+    animation: fadeUp 0.3s var(--ease) both;
+  }
+  @keyframes fadeUp{
+    from{ opacity:0; transform: translateY(4px); }
+    to{ opacity:1; transform: translateY(0); }
+  }
+  .log-line .t{ color: #4B5563; flex-shrink:0; }
+  .log-line.ok .msg::before{ content: "✓ "; color: var(--accent); }
+  .log-line.run .msg{ color: var(--text); }
+  .log-line.run .msg::before{ content: "› "; color: var(--accent); }
+  .log-line.err .msg{ color: var(--error); }
+  .log-line.err .msg::before{ content: "✗ "; }
+
+  .log-line.run .msg::after{
+    content: "";
+    display:inline-block;
+    width: 6px; height: 6px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1s ease-in-out infinite;
+    vertical-align: middle;
+  }
+  @keyframes pulse{
+    0%,100%{ opacity: 0.25; }
+    50%{ opacity: 1; }
+  }
+
+  /* Progress bar inside console */
+  .progress-track{
+    margin-top: 14px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .progress-fill{
+    height:100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    border-radius: 2px;
+    transition: width 0.4s var(--ease);
+  }
+
+  /* ============================================
+     SUCCESS RESULT
+     ============================================ */
+  .result{
+    margin-top: 16px;
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    flex-wrap: wrap;
+    animation: slideIn 0.3s var(--ease);
+  }
+  .result[hidden]{ display:none; }
+  .result-info{ display:flex; align-items:center; gap:10px; min-width:0; }
+  .result-info svg{ color: var(--accent); flex-shrink:0; }
+  .result-text{ min-width:0; }
+  .result-text .fname{
+    font-family: var(--mono); font-size: 13.5px; color: var(--text);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; max-width: 320px;
+  }
+  .result-text .fmeta{ font-size: 12px; color: var(--text-dim); margin-top:2px; }
+
+  .btn-download{
+    background: var(--accent);
+    color: #061310;
+    font-family: var(--mono);
+    font-weight:600;
+    font-size: 13px;
+    padding: 10px 16px;
+    border-radius: 7px;
+    border:none;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+    text-decoration:none;
+    transition: background 0.2s var(--ease), transform 0.15s var(--ease);
+  }
+  .btn-download:hover{ background:#79f0db; }
+  .btn-download:active{ transform: scale(0.97); }
+
+  /* ============================================
+     INFO STRIP — sets expectations honestly
+     ============================================ */
+  .info-strip{
+    margin-top: 28px;
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow:hidden;
+  }
+  .info-cell{
+    background: var(--panel);
+    padding: 16px 18px;
+  }
+  .info-cell .k{
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .info-cell .v{
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height:1.5;
+  }
+
+  /* ============================================
+     FOOTER
+     ============================================ */
+  footer{
+    margin-top: auto;
+    padding: 32px 0 28px;
+    border-top: 1px solid var(--border);
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  footer .credit{
+    font-family: var(--mono);
+  }
+  footer .credit strong{ color: var(--text); }
+  .social-links{
+    display:flex;
+    gap: 14px;
+  }
+  .social-links a{
+    color: var(--text-dim);
+    text-decoration:none;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    margin-left: 14px; /* fallback for browsers without flex gap support */
+    font-size: 13px;
+    transition: color 0.2s var(--ease);
+  }
+  .social-links a:first-child{ margin-left: 0; }
+  .social-links a:hover{ color: var(--accent); }
+
+  /* ============================================
+     RESPONSIVE
+     ============================================ */
+  @media (max-width: 600px){
+    .wrap{ padding: 0 16px; }
+    .hero{ padding: 40px 0 24px; }
+    form.url-form{ flex-direction: column; }
+    .input-row{ flex: 1 1 auto; }
+    .btn-primary{ width:100%; justify-content:center; }
+    .info-strip{ grid-template-columns: 1fr; }
+    footer{ flex-direction: column; align-items: flex-start; }
+    .result{ flex-direction:column; align-items:flex-start; }
+    .btn-download{ width:100%; justify-content:center; }
+  }
+
+  @media (max-width: 380px){
+    .input-row .prompt{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<a href="#url-input" class="skip-link">Skip to URL input</a>
+
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      <span>sitecopy</span>
+    </div>
+    <div class="top-meta" aria-hidden="true">v1.0 · local mirror tool</div>
+  </header>
+
+  <!-- HERO: the tool itself is the thesis, not a stats-driven marketing banner -->
+  <section class="hero">
+    <h1>Mirror a site<br>to your <span class="accent">disk</span>.</h1>
+    <p>Paste a URL. Sitecopy fetches the page, rewrites its asset links, and hands you back a zip you can open offline — no install required.</p>
+  </section>
+
+  <!-- CONSOLE CARD: signature element styled as a terminal window -->
+  <section class="console" aria-labelledby="console-label">
+    <div class="console-bar">
+      <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span class="label" id="console-label">copy-session</span>
+    </div>
+
+    <div class="console-body">
+      <form class="url-form" id="copyForm" novalidate>
+        <div class="input-row">
+          <span class="prompt" aria-hidden="true">$</span>
+          <label for="url-input" class="sr-only" style="position:absolute;left:-9999px;">Website URL to copy</label>
+          <input
+            type="text"
+            id="url-input"
+            name="url"
+            placeholder="https://example.com"
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="url-hint"
+            inputmode="url"
+          >
+        </div>
+        <button type="submit" class="btn btn-primary" id="copyBtn">
+          <svg id="btnIconIdle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <svg id="btnIconLoading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" hidden><circle cx="12" cy="12" r="9" stroke-dasharray="42" stroke-dashoffset="14"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>
+          <span id="btnLabel">Copy site</span>
+        </button>
+      </form>
+
+      <p class="hint" id="url-hint">Include the protocol — https:// or http://. Large or JS-heavy sites may take longer to mirror.</p>
+
+      <!-- Error alert: hidden by default, populated by JS -->
+      <div class="alert" id="errorAlert" role="alert" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="errorText"></span>
+      </div>
+
+      <!-- Live log panel: streams real status text during the copy job -->
+      <div class="log-panel" id="logPanel" aria-live="polite">
+        <div class="log-scroll" id="logScroll"></div>
+        <div class="progress-track" style="margin:0 16px 14px;">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <!-- Success result: shown once the zip is ready -->
+      <div class="result" id="resultBox" hidden>
+        <div class="result-info">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <div class="result-text">
+            <span class="fname" id="resultName">site.zip</span>
+            <span class="fmeta" id="resultMeta">Ready</span>
+          </div>
+        </div>
+        <a class="btn-download" id="downloadLink" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download zip
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- INFO STRIP: sets honest expectations about capability/limits -->
+  <section class="info-strip" aria-label="What to expect">
+    <div class="info-cell">
+      <div class="k">Captures</div>
+      <div class="v">HTML, CSS, JS, images and fonts referenced by the page you enter.</div>
+    </div>
+    <div class="info-cell">
+      <div class="k">Single page</div>
+      <div class="v">Mirrors the page at the exact URL given — it doesn't crawl linked pages.</div>
+    </div>
+    <div class="info-cell">
+      <div class="k">Static only</div>
+      <div class="v">Content rendered by JavaScript after load may not appear in the copy.</div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="credit">Website Copier by <strong>Zanz</strong></div>
+    <div class="social-links">
+      <a href="#" aria-label="Zanz on GitHub">GitHub</a>
+      <a href="#" aria-label="Zanz on Twitter">Twitter</a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  /* ============================================
+     CONFIG
+     Point this at your running backend (see server/
+     folder). Defaults to same-origin "/api/copy",
+     which works if you serve this file from the
+     same Express app (see README for both options).
+     ============================================ */
+  const API_ENDPOINT = '/api/copy';
+
+  const form        = document.getElementById('copyForm');
+  const urlInput     = document.getElementById('url-input');
+  const copyBtn      = document.getElementById('copyBtn');
+  const btnLabel     = document.getElementById('btnLabel');
+  const iconIdle     = document.getElementById('btnIconIdle');
+  const iconLoading  = document.getElementById('btnIconLoading');
+  const errorAlert   = document.getElementById('errorAlert');
+  const errorText    = document.getElementById('errorText');
+  const logPanel     = document.getElementById('logPanel');
+  const logScroll    = document.getElementById('logScroll');
+  const progressFill = document.getElementById('progressFill');
+  const resultBox     = document.getElementById('resultBox');
+  const resultName    = document.getElementById('resultName');
+  const resultMeta     = document.getElementById('resultMeta');
+  const downloadLink   = document.getElementById('downloadLink');
+
+  let isRunning = false;
+
+  // ---- Validation -------------------------------------------------
+
+  function normalizeUrl(raw){
+    let value = raw.trim();
+    if (!value) return null;
+    // If someone forgets the protocol, assume https rather than erroring immediately.
+    if (!/^https?:\/\//i.test(value)) {
+      value = 'https://' + value;
+    }
+    try {
+      const u = new URL(value);
+      if (!u.hostname || !u.hostname.includes('.')) return null;
+      return u.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function showError(message){
+    errorText.textContent = message;
+    errorAlert.hidden = false;
+  }
+
+  function clearError(){
+    errorAlert.hidden = true;
+    errorText.textContent = '';
+  }
+
+  // ---- Log panel helpers --------------------------------------------
+
+  function resetLog(){
+    logScroll.innerHTML = '';
+    progressFill.style.width = '0%';
+    logPanel.classList.remove('open');
+  }
+
+  function timestamp(){
+    const d = new Date();
+    return d.toTimeString().slice(0,8);
+  }
+
+  function logLine(message, kind){
+    // kind: 'run' (in progress), 'ok' (done), 'err' (failed)
+    const line = document.createElement('div');
+    line.className = 'log-line ' + kind;
+    line.innerHTML =
+      '<span class="t">' + timestamp() + '</span>' +
+      '<span class="msg">' + message + '</span>';
+    logScroll.appendChild(line);
+    logScroll.scrollTop = logScroll.scrollHeight;
+    return line;
+  }
+
+  function markLineDone(line, message){
+    line.className = 'log-line ok';
+    line.querySelector('.msg').textContent = message;
+  }
+
+  function setProgress(pct){
+    progressFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  }
+
+  // ---- Button state --------------------------------------------------
+
+  function setLoading(loading){
+    isRunning = loading;
+    copyBtn.disabled = loading;
+    iconIdle.hidden = loading;
+    iconLoading.hidden = !loading;
+    btnLabel.textContent = loading ? 'Copying…' : 'Copy site';
+  }
+
+  // ---- Main flow -------------------------------------------------------
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (isRunning) return;
+
+    clearError();
+    resultBox.hidden = true;
+    resetLog();
+
+    const normalized = normalizeUrl(urlInput.value);
+    if (!normalized) {
+      showError('That doesn\'t look like a valid URL. Try something like https://example.com.');
+      urlInput.focus();
+      return;
+    }
+
+    setLoading(true);
+    logPanel.classList.add('open');
+
+    const stepResolve = logLine('Resolving ' + new URL(normalized).hostname + '…', 'run');
+
+    try {
+      // Single request to the backend, which streams progress back.
+      // If your server supports Server-Sent Events at /api/copy/stream,
+      // swap this for an EventSource to get live per-asset log lines.
+      setProgress(15);
+
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: normalized })
+      });
+
+      markLineDone(stepResolve, 'Resolved ' + new URL(normalized).hostname);
+      const stepFetch = logLine('Fetching page and assets…', 'run');
+      setProgress(45);
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || ('Server responded with ' + response.status));
+      }
+
+      const blob = await response.blob();
+      markLineDone(stepFetch, 'Fetched page and assets');
+
+      const stepZip = logLine('Packaging zip archive…', 'run');
+      setProgress(85);
+      await new Promise(r => setTimeout(r, 250)); // tiny pause so the log reads naturally
+      markLineDone(stepZip, 'Packaged zip archive');
+      setProgress(100);
+
+      // Build a downloadable filename from the hostname
+      const host = new URL(normalized).hostname.replace(/^www\./, '');
+      const filename = host.replace(/[^a-z0-9.-]/gi, '_') + '.zip';
+
+      const objectUrl = URL.createObjectURL(blob);
+      downloadLink.href = objectUrl;
+      downloadLink.setAttribute('download', filename);
+
+      resultName.textContent = filename;
+      resultMeta.textContent = formatBytes(blob.size) + ' · ready to download';
+      resultBox.hidden = false;
+
+      logLine('Done.', 'ok');
+
+      // Trigger the download automatically too, so the user doesn't
+      // have to click twice if they just want the file immediately.
+      downloadLink.click();
+
+    } catch (err) {
+      console.error(err);
+      const friendly = describeError(err);
+      logLine(friendly, 'err');
+      showError(friendly);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  function formatBytes(bytes){
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  }
+
+  function describeError(err){
+    if (err instanceof TypeError) {
+      // fetch() throws TypeError on network failure / CORS / server not running
+      return 'Couldn\'t reach the copy server. Make sure the backend is running and try again.';
+    }
+    if (err && err.message) {
+      // Surface known backend error strings as-is; they're already user-facing.
+      return err.message;
+    }
+    return 'Something went wrong while copying that site. Please try again.';
+  }
+
+  // Clear error state as soon as the user starts correcting their input
+  urlInput.addEventListener('input', () => {
+    if (!errorAlert.hidden) clearError();
+  });
+</script>
+
+</body>
+</html>
