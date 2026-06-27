@@ -1,0 +1,16 @@
+{
+  "name": "sitecopy-server",
+  "version": "1.0.0",
+  "description": "Backend for Sitecopy - fetches a webpage and its assets and returns a zip.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cheerio": "^1.0.0",
+    "archiver": "^7.0.1",
+    "node-fetch": "^2.7.0"
+  }
+}
